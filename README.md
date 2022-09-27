@@ -35,10 +35,10 @@ python3 gtfs_extractor/filters.py --from feeds/$DATASET --agencies $AGENCIES
 
 ```
 
-Or extract by bounding box:
+Or extract by bounding box with WGS84 4326 Coordinates lon/lat (lon min, lat min, lon max, lat max):
 ```bash
 export DATASET=otd
-export BBOX="46.44652,46.57948,6.40353,6.87899"
+export BBOX="6.40353,46.44652,6.87899,46.57948"
 rm -rf filtered/*
 python3 gtfs_extractor/filters.py --from feeds/$DATASET --bbox $BBOX
 ```

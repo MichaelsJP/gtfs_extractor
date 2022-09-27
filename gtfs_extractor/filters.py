@@ -16,7 +16,7 @@ class Bbox:
         return lat <= self.max_lat and lat >= self.min_lat and lon <= self.max_lon and lon >= self.min_lon
 
     @staticmethod
-    def create_from_coordinates(min_lat, max_lat, min_lon, max_lon):
+    def create_from_coordinates(min_lon, min_lat, max_lon, max_lat):
         bbox = Bbox()
         bbox.min_lat = min_lat
         bbox.max_lat = max_lat
