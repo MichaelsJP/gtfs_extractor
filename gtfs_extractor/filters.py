@@ -1,6 +1,12 @@
 import codecs
 import csv
 import os.path
+from pathlib import Path
+from typing import Set
+
+import dask
+import dask.dataframe as ddf
+import pandas as pd
 
 path_in = 'from'
 path_out = 'filtered'
@@ -124,12 +130,20 @@ def get_stops_in_bbox(bbox: Bbox):
     return stops
 
 
+@dask.delayed
+def filter_stops_by_trips(rows: pd.DataFrame, stops: Set):
+    mask = rows['stop_id'].isin(stops)
+    rows.where(mask, inplace=True)
+    rows.dropna(inplace=True)
+    return rows['trip_id'].tolist()
+
+
 def get_trips_of_stops(stops):
-    trips = set()
-    for line in line_reader('stop_times.txt', 4):
-        trip_id, arrival_time, departure_time, stop_id, _ = line
-        if stop_id in stops:
-            trips.add(trip_id)
+    file_path = Path(get_in_file('stop_times.txt'))
+    csv_chunks: ddf.DataFrame = ddf.read_csv(file_path, usecols=["stop_id", "trip_id"], low_memory=False)
+    lists_of_trips = list(
+        dask.compute(*[filter_stops_by_trips(d, stops) for d in csv_chunks.to_delayed()], scheduler='multiprocessing'))
+    trips = set([item for sublist in lists_of_trips for item in sublist])
     return trips
 
 
