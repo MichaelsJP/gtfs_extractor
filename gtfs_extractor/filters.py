@@ -131,18 +131,18 @@ def get_stops_in_bbox(bbox: Bbox):
 
 
 @dask.delayed
-def filter_stops_by_trips(rows: pd.DataFrame, stops: Set):
-    mask = rows['stop_id'].isin(stops)
-    rows.where(mask, inplace=True)
-    rows.dropna(inplace=True)
-    return rows['trip_id'].tolist()
+def filter_trips_by_stops(trips: pd.DataFrame, stops: Set):
+    mask = trips['stop_id'].isin(stops)
+    trips.where(mask, inplace=True)
+    trips.dropna(inplace=True)
+    return trips['trip_id'].tolist()
 
 
 def get_trips_of_stops(stops):
     file_path = Path(get_in_file('stop_times.txt'))
     csv_chunks: ddf.DataFrame = ddf.read_csv(file_path, usecols=["stop_id", "trip_id"], low_memory=False)
     lists_of_trips = list(
-        dask.compute(*[filter_stops_by_trips(d, stops) for d in csv_chunks.to_delayed()], scheduler='multiprocessing'))
+        dask.compute(*[filter_trips_by_stops(d, stops) for d in csv_chunks.to_delayed()], scheduler='multiprocessing'))
     trips = set([item for sublist in lists_of_trips for item in sublist])
     return trips
 
