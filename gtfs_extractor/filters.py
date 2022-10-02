@@ -119,14 +119,21 @@ def filter_stops(stops):
     filter_using_first_column('stops.txt', stops)
 
 
+@dask.delayed
+def filter_stops_by_bbox(stops: pd.DataFrame, bbox: Bbox):
+    mask = stops.apply(lambda row: bbox.contains(row['stop_lat'], row['stop_lon']), axis=1)
+    stops['stop_id'].where(mask, inplace=True)
+    stops.dropna(inplace=True)
+    return stops['stop_id'].tolist()
+
+
 def get_stops_in_bbox(bbox: Bbox):
-    stops = set()
-    reader = csv_line_reader('stops.txt', ['stop_id', 'stop_lat', 'stop_lon'])
-    for line in reader:
-        # stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon
-        stop_id, stop_lat, stop_lon = line
-        if bbox.contains(float(stop_lat), float(stop_lon)):
-            stops.add(stop_id)
+    file_path = Path(get_in_file('stops.txt'))
+    csv_chunks: ddf.DataFrame = ddf.read_csv(file_path, usecols=['stop_id', 'stop_lat', 'stop_lon'], low_memory=False,
+                                             dtype={'stop_id': 'object'})
+    lists_of_trips = list(
+        dask.compute(*[filter_stops_by_bbox(d, bbox) for d in csv_chunks.to_delayed()], scheduler='multiprocessing'))
+    stops = set([item for sublist in lists_of_trips for item in sublist])
     return stops
 
 
@@ -237,10 +244,10 @@ def simple_app_by_agencies(keep_agencies):
 def simple_app_by_bbox(bbox: Bbox):
     stop_ids_in_bbox = get_stops_in_bbox(bbox)
     print('Found {} stops in bbox'.format(len(stop_ids_in_bbox)))
+
     trip_ids = get_trips_of_stops(stop_ids_in_bbox)
     print('Found {} trips in bbox'.format(len(trip_ids)))
 
-    print('Keeping {} trips'.format(len(trip_ids)))
     route_ids_to_keep = set()
     service_ids_to_keep = set()
     filter_trips(trip_ids, route_ids_to_keep, service_ids_to_keep)
