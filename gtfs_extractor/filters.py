@@ -2,7 +2,7 @@ import codecs
 import csv
 import os.path
 from pathlib import Path
-from typing import Set
+from typing import Set, Dict, List, Union
 
 import dask
 import dask.dataframe as ddf
@@ -95,11 +95,26 @@ def split_writer(filename):
                     out_file.write(line)
 
 
-def filter_using_first_column(filename, ids):
-    for line in line_filter(filename, 1):
-        id, _ = line.split
-        line.keep = id in ids
+@dask.delayed
+def delayed_filter(rows: pd.DataFrame, ids: Set, column: Union[str, int]):
+    if isinstance(column, int):
+        column = rows.columns[column]
+    mask = rows[column].isin(ids)
+    rows[column].where(mask, inplace=True)
+    return rows[rows[column].notna()]
 
+
+def filter_using_custom_column(filename: str, ids: Set, column: Union[str, int] = 0, dtype: Dict = None,
+                               return_columns: List = None):
+    file_path = Path(get_in_file(filename))
+    csv_chunks: ddf.DataFrame = ddf.read_csv(file_path, dtype=dtype, low_memory=False)
+    results = list(
+        dask.compute(*[delayed_filter(d, ids, column) for d in csv_chunks.to_delayed()], scheduler='single-threaded'))
+    results = pd.concat(results, axis=0)
+    output_path = Path(get_out_file(filename))
+    results.to_csv(output_path, index=False)
+    if isinstance(return_columns, List) and len(return_columns) > 0:
+        return tuple(results[return_column] for return_column in return_columns)
 
 def filter_agencies(keep_agencies):
     filter_using_first_column('agency.txt', keep_agencies)
@@ -290,7 +305,10 @@ def simple_app_by_bbox(bbox: Bbox):
     agency_ids_to_keep = filter_routes(route_ids_to_keep)
 
     print('Keeping {} agencies'.format(len(agency_ids_to_keep)))
-    filter_agencies(agency_ids_to_keep)
+    filter_using_custom_column("agency.txt", agency_ids_to_keep, column=0, dtype={
+        "agency_id": "object", "agency_name": "object", "agency_url": "object",
+        "agency_timezone": "object", "agency_lang": "object", "agency_phone": "object"
+    })
 
     simple_app_common(service_ids_to_keep, trip_ids)
 
