@@ -173,20 +173,35 @@ def filter_trips(trips: Set):
                                                                'trip_short_name': 'object'}, low_memory=False)
     results = list(dask.compute(*[filter_trips_by_trip_ids(d, trips) for d in csv_chunks.to_delayed()],
                                 scheduler='multiprocessing'))
-    associated_routes: Set = set([item for sublist in results for item in sublist['route_id']])
-    associated_services: Set = set([item for sublist in results for item in sublist['service_id']])
     results = pd.concat(results, axis=0)
     output_path = Path(get_out_file("trips.txt"))
     results.to_csv(output_path, index=False)
-    return associated_routes, associated_services
+    return results['route_id'].tolist(), results['service_id'].tolist()
 
 
-def filter_routes(routes, associated_agencies):
-    for line in line_filter('routes.txt', 2):
-        route_id, agency_id, _ = line.split
-        if route_id in routes:
-            associated_agencies.add(agency_id)
-            line.keep = True
+@dask.delayed
+def filter_routes_by_route_ids(routes: pd.DataFrame, route_ids_to_keep: Set):
+    mask = routes['route_id'].isin(route_ids_to_keep)
+    routes['route_id'].where(mask, inplace=True)
+    routes = routes[routes['route_id'].notna()]
+    return routes
+
+
+def filter_routes(routes):
+    file_path = Path(get_in_file('routes.txt'))
+    csv_chunks: ddf.DataFrame = ddf.read_csv(file_path, dtype={"route_id": "object", "agency_id": "object",
+                                                               "route_short_name": "object",
+                                                               "route_long_name": "object", "route_desc": "object",
+                                                               "route_type": "object", "route_url": "object",
+                                                               "route_color": "object", "route_text_color": "object"},
+                                             low_memory=False)
+    results = list(
+        dask.compute(*[filter_routes_by_route_ids(d, routes) for d in csv_chunks.to_delayed()],
+                     scheduler='multiprocessing'))
+    results = pd.concat(results, axis=0)
+    output_path = Path(get_out_file("routes.txt"))
+    results.to_csv(output_path, index=False)
+    return results['agency_id'].tolist()
 
 
 # Keep the routes used by the agencies
@@ -271,8 +286,8 @@ def simple_app_by_bbox(bbox: Bbox):
     route_ids_to_keep, service_ids_to_keep = filter_trips(trip_ids)
 
     print('Keeping {} routes'.format(len(route_ids_to_keep)))
-    agency_ids_to_keep = set()
-    filter_routes(route_ids_to_keep, agency_ids_to_keep)
+    agency_ids_to_keep: Set
+    agency_ids_to_keep = filter_routes(route_ids_to_keep)
 
     print('Keeping {} agencies'.format(len(agency_ids_to_keep)))
     filter_agencies(agency_ids_to_keep)
