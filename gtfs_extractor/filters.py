@@ -8,6 +8,7 @@ import dask
 import dask.dataframe as ddf
 import pandas as pd
 from dask.diagnostics import ProgressBar
+import shutil
 
 ProgressBar().register()
 
@@ -104,41 +105,46 @@ def delayed_filter(rows: pd.DataFrame, ids: Set, column: Union[str, int]):
     return rows[rows[column].notna()]
 
 
-def filter_using_custom_column(filename: str, ids: Set, column: Union[str, int] = 0, dtype: Dict = None,
-                               return_columns: List = None):
+def filter_using_custom_column(filename: str, ids: Set, column: Union[str, int] = 0, usecols: List = None,
+                               dtype: Union[str, Dict] = 'object',
+                               return_columns: List = None, write_out: bool = False,
+                               scheduler: str = 'multiprocessing'):
     file_path = Path(get_in_file(filename))
-    csv_chunks: ddf.DataFrame = ddf.read_csv(file_path, dtype=dtype, low_memory=False)
+    if not file_path.exists():
+        print(f"Could not find file {filename} in given path {file_path}. Skip processing.")
+        return tuple()
+    csv_chunks: ddf.DataFrame = ddf.read_csv(file_path, usecols=usecols, dtype=dtype, low_memory=False)
     results = list(
-        dask.compute(*[delayed_filter(d, ids, column) for d in csv_chunks.to_delayed()], scheduler='single-threaded'))
+        dask.compute(*[delayed_filter(d, ids, column) for d in csv_chunks.to_delayed()], scheduler=scheduler))
     results = pd.concat(results, axis=0)
-    output_path = Path(get_out_file(filename))
-    results.to_csv(output_path, index=False)
+    if write_out:
+        output_path = Path(get_out_file(filename))
+        results.to_csv(output_path, index=False)
     if isinstance(return_columns, List) and len(return_columns) > 0:
-        return tuple(results[return_column] for return_column in return_columns)
+        return tuple(set(results[return_column].tolist()) for return_column in return_columns)
 
 
 def filter_agencies(agency_ids_to_keep):
-    filter_using_custom_column("agency.txt", agency_ids_to_keep, column=0, dtype={
-        "agency_id": "object", "agency_name": "object", "agency_url": "object",
-        "agency_timezone": "object", "agency_lang": "object", "agency_phone": "object"
-    })
+    filter_using_custom_column("agency.txt", agency_ids_to_keep, column='agency_id', write_out=True)
 
 
-def filter_calendar_using_services(services):
-    filter_using_first_column('calendar.txt', services)
+def filter_calendar_using_services(service_ids_to_keep):
+    filter_using_custom_column("calendar.txt", service_ids_to_keep, column='service_id', write_out=True)
 
 
-def filter_calendar_dates_using_services(services):
-    filter_using_first_column('calendar_dates.txt', services)
+def filter_calendar_dates_using_services(service_ids_to_keep):
+    filter_using_custom_column("calendar_dates.txt", service_ids_to_keep, column='service_id',
+                               write_out=True)
 
 
-def filter_frequencies_using_trips(trips):
-    if os.path.isfile(get_in_file('frequencies.txt')):
-        filter_using_first_column('frequencies.txt', trips)
+def filter_frequencies_using_trips(trip_ids_to_keep):
+    filter_using_custom_column("frequencies.txt", trip_ids_to_keep, column='trip_id',
+                               write_out=True)
 
 
-def filter_stops(stops):
-    filter_using_first_column('stops.txt', stops)
+def filter_stops(stop_ids_to_keep):
+    filter_using_custom_column("stops.txt", stop_ids_to_keep, column='stop_id',
+                               write_out=True)
 
 
 @dask.delayed
@@ -159,21 +165,9 @@ def get_stops_in_bbox(bbox: Bbox):
     return stops
 
 
-@dask.delayed
-def filter_trips_by_stops(trips: pd.DataFrame, stops: Set):
-    mask = trips['stop_id'].isin(stops)
-    trips.where(mask, inplace=True)
-    trips.dropna(inplace=True)
-    return trips['trip_id'].tolist()
-
-
-def get_trips_of_stops(stops) -> Set:
-    file_path = Path(get_in_file('stop_times.txt'))
-    csv_chunks: ddf.DataFrame = ddf.read_csv(file_path, usecols=["stop_id", "trip_id"], low_memory=False)
-    lists_of_trips = list(
-        dask.compute(*[filter_trips_by_stops(d, stops) for d in csv_chunks.to_delayed()], scheduler='multiprocessing'))
-    trips = set([item for sublist in lists_of_trips for item in sublist])
-    return trips
+def get_trips_of_stops(stops_to_keep) -> Set:
+    return filter_using_custom_column("stop_times.txt", stops_to_keep, usecols=["stop_id", "trip_id"], column='stop_id',
+                                      return_columns=['trip_id'], write_out=False)[0]
 
 
 @dask.delayed
@@ -184,18 +178,9 @@ def filter_trips_by_trip_ids(trips: pd.DataFrame, trip_ids_to_keep: Set):
     return trips
 
 
-def filter_trips(trips: Set):
-    file_path = Path(get_in_file('trips.txt'))
-    csv_chunks: ddf.DataFrame = ddf.read_csv(file_path, dtype={'service_id': 'object',
-                                                               'route_id': 'object',
-                                                               'trip_id': 'object',
-                                                               'trip_short_name': 'object'}, low_memory=False)
-    results = list(dask.compute(*[filter_trips_by_trip_ids(d, trips) for d in csv_chunks.to_delayed()],
-                                scheduler='multiprocessing'))
-    results = pd.concat(results, axis=0)
-    output_path = Path(get_out_file("trips.txt"))
-    results.to_csv(output_path, index=False)
-    return results['route_id'].tolist(), results['service_id'].tolist()
+def filter_trips(trips_to_keep: Set):
+    return filter_using_custom_column("trips.txt", trips_to_keep, column='trip_id', dtype='object',
+                                      return_columns=['route_id', 'service_id'], write_out=True)
 
 
 @dask.delayed
@@ -206,21 +191,9 @@ def filter_routes_by_route_ids(routes: pd.DataFrame, route_ids_to_keep: Set):
     return routes
 
 
-def filter_routes(routes):
-    file_path = Path(get_in_file('routes.txt'))
-    csv_chunks: ddf.DataFrame = ddf.read_csv(file_path, dtype={"route_id": "object", "agency_id": "object",
-                                                               "route_short_name": "object",
-                                                               "route_long_name": "object", "route_desc": "object",
-                                                               "route_type": "object", "route_url": "object",
-                                                               "route_color": "object", "route_text_color": "object"},
-                                             low_memory=False)
-    results = list(
-        dask.compute(*[filter_routes_by_route_ids(d, routes) for d in csv_chunks.to_delayed()],
-                     scheduler='multiprocessing'))
-    results = pd.concat(results, axis=0)
-    output_path = Path(get_out_file("routes.txt"))
-    results.to_csv(output_path, index=False)
-    return results['agency_id'].tolist()
+def filter_routes(routes_to_keep):
+    return filter_using_custom_column("routes.txt", routes_to_keep, column='route_id',
+                                      return_columns=['agency_id'], write_out=True)[0]
 
 
 # Keep the routes used by the agencies
@@ -241,31 +214,27 @@ def filter_trips_of_routes(route_ids, matching_services, matching_trips):
             line.keep = True
 
 
-def filter_stop_times_using_trips(trips, matching_stop_ids):
-    for line in line_filter('stop_times.txt', 4):
-        trip_id, arrival_time, departure_time, stop_id, _ = line.split
-        if trip_id in trips:
-            matching_stop_ids.add(stop_id)
-            line.keep = True
+def filter_stop_times_using_trips(trip_ids_to_keep):
+    return filter_using_custom_column("stop_times.txt", trip_ids_to_keep, column='trip_id',
+                                      return_columns=['stop_id'], write_out=True)[0]
 
 
 # Keep the transfers
-def filter_transfers_using_stops(stops):
+def filter_transfers_using_stops(stop_ids_to_keep):
+    # TODO filter_using_custom_column with multiple criterias
     for line in line_filter('transfers.txt', 2):
         from_stop_id, to_stop_id, _ = line.split
-        if from_stop_id in stops and to_stop_id in stops:
+        if from_stop_id in stop_ids_to_keep and to_stop_id in stop_ids_to_keep:
             line.keep = True
 
 
 def simple_app_common(service_ids_to_keep, trip_ids_to_keep):
-    import shutil
     filter_calendar_dates_using_services(service_ids_to_keep)
     filter_calendar_using_services(service_ids_to_keep)
     filter_frequencies_using_trips(trip_ids_to_keep)
 
     # Keep the stop_times used by the trips
-    stop_ids_to_keep = set()
-    filter_stop_times_using_trips(trip_ids_to_keep, stop_ids_to_keep)
+    stop_ids_to_keep: Set = filter_stop_times_using_trips(trip_ids_to_keep)
     filter_stops(stop_ids_to_keep)
     filter_transfers_using_stops(stop_ids_to_keep)
 
@@ -309,7 +278,7 @@ def simple_app_by_bbox(bbox: Bbox):
     agency_ids_to_keep = filter_routes(route_ids_to_keep)
 
     print('Keeping {} agencies'.format(len(agency_ids_to_keep)))
-    filter_agencies(keep_agencies)
+    filter_agencies(agency_ids_to_keep)
 
     simple_app_common(service_ids_to_keep, trip_ids)
 
