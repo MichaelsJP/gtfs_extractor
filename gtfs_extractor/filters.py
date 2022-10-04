@@ -7,6 +7,9 @@ from typing import Set
 import dask
 import dask.dataframe as ddf
 import pandas as pd
+from dask.diagnostics import ProgressBar
+
+ProgressBar().register()
 
 path_in = 'from'
 path_out = 'filtered'
@@ -145,7 +148,7 @@ def filter_trips_by_stops(trips: pd.DataFrame, stops: Set):
     return trips['trip_id'].tolist()
 
 
-def get_trips_of_stops(stops):
+def get_trips_of_stops(stops) -> Set:
     file_path = Path(get_in_file('stop_times.txt'))
     csv_chunks: ddf.DataFrame = ddf.read_csv(file_path, usecols=["stop_id", "trip_id"], low_memory=False)
     lists_of_trips = list(
@@ -154,13 +157,28 @@ def get_trips_of_stops(stops):
     return trips
 
 
-def filter_trips(trips, associated_routes, associated_services):
-    for line in line_filter('trips.txt', 3):
-        route_id, service_id, trip_id, _ = line.split
-        if trip_id in trips:
-            associated_routes.add(route_id)
-            associated_services.add(service_id)
-            line.keep = True
+@dask.delayed
+def filter_trips_by_trip_ids(trips: pd.DataFrame, trip_ids_to_keep: Set):
+    mask = trips['trip_id'].isin(trip_ids_to_keep)
+    trips['trip_id'].where(mask, inplace=True)
+    trips = trips[trips['trip_id'].notna()]
+    return trips
+
+
+def filter_trips(trips: Set):
+    file_path = Path(get_in_file('trips.txt'))
+    csv_chunks: ddf.DataFrame = ddf.read_csv(file_path, dtype={'service_id': 'object',
+                                                               'route_id': 'object',
+                                                               'trip_id': 'object',
+                                                               'trip_short_name': 'object'}, low_memory=False)
+    results = list(dask.compute(*[filter_trips_by_trip_ids(d, trips) for d in csv_chunks.to_delayed()],
+                                scheduler='multiprocessing'))
+    associated_routes: Set = set([item for sublist in results for item in sublist['route_id']])
+    associated_services: Set = set([item for sublist in results for item in sublist['service_id']])
+    results = pd.concat(results, axis=0)
+    output_path = Path(get_out_file("trips.txt"))
+    results.to_csv(output_path, index=False)
+    return associated_routes, associated_services
 
 
 def filter_routes(routes, associated_agencies):
@@ -245,12 +263,12 @@ def simple_app_by_bbox(bbox: Bbox):
     stop_ids_in_bbox = get_stops_in_bbox(bbox)
     print('Found {} stops in bbox'.format(len(stop_ids_in_bbox)))
 
-    trip_ids = get_trips_of_stops(stop_ids_in_bbox)
+    trip_ids: Set = get_trips_of_stops(stop_ids_in_bbox)
     print('Found {} trips in bbox'.format(len(trip_ids)))
 
-    route_ids_to_keep = set()
-    service_ids_to_keep = set()
-    filter_trips(trip_ids, route_ids_to_keep, service_ids_to_keep)
+    route_ids_to_keep: Set
+    service_ids_to_keep: Set
+    route_ids_to_keep, service_ids_to_keep = filter_trips(trip_ids)
 
     print('Keeping {} routes'.format(len(route_ids_to_keep)))
     agency_ids_to_keep = set()
