@@ -17,7 +17,7 @@ def test_version() -> None:
     assert f"{__app_name__} v{__version__}\n" in result.stdout
 
 
-def test_extract(tmpdir: LocalPath) -> None:
+def test_extract_by_bbox(tmpdir: LocalPath) -> None:
     test_gtfs_folder: str = script_path.joinpath("../tests/files/ic_ice_gtfs_germany").__str__()
 
     result = runner.invoke(
