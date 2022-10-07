@@ -186,21 +186,21 @@ class Extractor(GTFS):
         ...
 
     def extract_by_bbox(self, bbox: Bbox) -> List:
-        logger.debug("Filter stops within bbox")
+        logger.info("Filter stops within bbox")
         stop_ids_in_bbox = self._get_stops_in_bbox(bbox)
         logger.info("Found {} stops in bbox".format(len(stop_ids_in_bbox)))
 
-        logger.debug("Filter trips from selected stops")
+        logger.info("Filter trips from selected stops")
         trip_ids: Set = self._get_trips_of_stops(stop_ids_in_bbox)
         logger.info("Found {} trips in bbox".format(len(trip_ids)))
 
-        logger.debug("Filter routes from selected trips")
+        logger.info("Filter routes from selected trips")
         route_ids_to_keep: Set
         service_ids_to_keep: Set
         route_ids_to_keep, service_ids_to_keep = self._filter_trips(trip_ids)
         logger.info("Found {} routes in bbox".format(len(route_ids_to_keep)))
 
-        logger.debug("Filter agencies")
+        logger.info("Filter agencies")
         agency_ids_to_keep: Set
         agency_ids_to_keep = self._filter_routes(route_ids_to_keep)
         logger.info("Keeping {} agencies in bbox".format(len(agency_ids_to_keep)))
