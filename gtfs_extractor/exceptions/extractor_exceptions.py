@@ -1,28 +1,28 @@
 from gtfs_extractor import logger
 
 
-class BaseException(Exception):
+class CustomException(Exception):
     """Base custom exception class"""
 
     pass
 
 
-class GtfsIncompleteException(BaseException):
-    def __init__(self):
+class GtfsIncompleteException(CustomException):
+    def __init__(self) -> None:
         self.message = "Your GTFS input is missing required files."
         logger.error(self.message)
         super().__init__(self.message)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.message
 
 
-class GtfsFileNotFound(BaseException):
-    def __init__(self, file_path: str):
+class GtfsFileNotFound(CustomException):
+    def __init__(self, file_path: str) -> None:
         self.message = "Couldn't find the given file"
         self.file_path = file_path
         logger.error(self.message)
         super().__init__(self.message)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.message}: {self.file_path}"

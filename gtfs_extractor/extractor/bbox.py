@@ -1,17 +1,18 @@
+from __future__ import annotations
+
+
 class Bbox:
-    min_lat = None
-    max_lat = None
-    min_lon = None
-    max_lon = None
+    _min_lat: float
+    _max_lat: float
+    _min_lon: float
+    _max_lon: float
 
-    def contains(self, lat: float, lon: float):
-        return lat <= self.max_lat and lat >= self.min_lat and lon <= self.max_lon and lon >= self.min_lon
+    def __init__(self, min_lon: float, min_lat: float, max_lon: float, max_lat: float) -> None:
+        super().__init__()
+        self._min_lat = min_lat
+        self._max_lat = max_lat
+        self._min_lon = min_lon
+        self._max_lon = max_lon
 
-    @staticmethod
-    def create_from_coordinates(min_lon, min_lat, max_lon, max_lat):
-        bbox = Bbox()
-        bbox.min_lat = min_lat
-        bbox.max_lat = max_lat
-        bbox.min_lon = min_lon
-        bbox.max_lon = max_lon
-        return bbox
+    def contains(self, lat: float, lon: float) -> bool:
+        return self._max_lat >= lat >= self._min_lat and self._max_lon >= lon >= self._min_lon

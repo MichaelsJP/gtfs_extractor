@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import errno
 import os
 import tempfile
 import zipfile
 
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 from gtfs_extractor import logger
 from gtfs_extractor.exceptions.extractor_exceptions import GtfsIncompleteException
@@ -12,21 +14,21 @@ from gtfs_extractor.exceptions.extractor_exceptions import GtfsIncompleteExcepti
 
 class GtfsFiles:
     # Required
-    agency: Union[Path, None] = None
-    calendar_dates: Union[Path, None] = None
-    calendar: Union[Path, None] = None
-    feed_info: Union[Path, None] = None
-    routes: Union[Path, None] = None
-    stop_times: Union[Path, None] = None
-    stops: Union[Path, None] = None
-    trips: Union[Path, None] = None
+    agency: Path
+    calendar_dates: Path
+    calendar: Path
+    feed_info: Path
+    routes: Path
+    stop_times: Path
+    stops: Path
+    trips: Path
 
     # Optional - not complete
-    frequencies: Union[Path, None] = None
-    shapes: Union[Path, None] = None
-    transfers: Union[Path, None] = None
+    frequencies: Path
+    shapes: Path
+    transfers: Path
 
-    def set_files(self, file_path: Path):
+    def set_files(self, file_path: Path) -> None:
         file_name: str = file_path.name
         if "agency" in file_name:
             self.agency = file_path
@@ -50,8 +52,10 @@ class GtfsFiles:
             self.shapes = file_path
         elif "transfers" in file_name:
             self.transfers = file_path
+        else:
+            logger.warn(f"Unknown file found: {file_path}")
 
-    def required_is_complete(self):
+    def required_is_complete(self) -> bool:
         if all(
             [
                 self.agency,
@@ -69,32 +73,33 @@ class GtfsFiles:
 
 
 class GTFS:
-    def __init__(self, input_folder: Path):
-        self.temporary_folder_context: Any[tempfile.TemporaryDirectory, None] = None
-        self.files: GtfsFiles = GtfsFiles()
+    def __init__(self, input_folder: Path) -> None:
+        self._input_folder: Path = input_folder
+        self._temporary_folder_context: Any[tempfile.TemporaryDirectory, None] = None
+        self._gtfs_files: GtfsFiles = GtfsFiles()
         if input_folder.is_file():
             input_folder = self._extract_gtfs_file(input_folder)
         if not input_folder.exists():
             raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), input_folder)
         for test in input_folder.glob("*.txt"):
-            self.files.set_files(test)
+            self._gtfs_files.set_files(test)
             print(test.name)
-        if not self.files.required_is_complete():
+        if not self._gtfs_files.required_is_complete():
             raise GtfsIncompleteException()
 
-    def close(self):
-        if isinstance(self.temporary_folder_context, tempfile.TemporaryDirectory):
-            self.temporary_folder_context.cleanup()
+    def close(self) -> None:
+        if isinstance(self._temporary_folder_context, tempfile.TemporaryDirectory):
+            self._temporary_folder_context.cleanup()
 
-    def __enter__(self):
+    def __enter__(self) -> GTFS:
         return self
 
-    def __exit__(self, type, value, traceback):
+    def __exit__(self, type: object, value: object, traceback: object) -> None:
         self.close()
 
     def _extract_gtfs_file(self, input_file: Path) -> Path:
-        self.temporary_folder_context = tempfile.TemporaryDirectory()
-        extract_path: Path = Path(self.temporary_folder_context.name)
+        self._temporary_folder_context = tempfile.TemporaryDirectory()
+        extract_path: Path = Path(self._temporary_folder_context.name)
         if not input_file.suffix == ".zip":
             # TODO raise wrong file
             logger.error("Input path is a file but not a .zip file. Exiting.")
@@ -103,6 +108,3 @@ class GTFS:
         with zipfile.ZipFile(input_file, "r") as zip_ref:
             zip_ref.extractall(extract_path)
         return extract_path
-
-    def _check_completeness(self):
-        ...
