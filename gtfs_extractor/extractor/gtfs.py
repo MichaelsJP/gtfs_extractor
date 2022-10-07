@@ -83,7 +83,6 @@ class GTFS:
             raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), input_folder)
         for test in input_folder.glob("*.txt"):
             self._gtfs_files.set_files(test)
-            print(test.name)
         if not self._gtfs_files.required_is_complete():
             raise GtfsIncompleteException()
 
