@@ -27,12 +27,16 @@ class Extractor(GTFS):
 
     @staticmethod
     @dask.delayed
-    def __delayed_filter(rows: pd.DataFrame, ids: Set, column: Union[str, int]) -> pd.DataFrame:
-        if isinstance(column, int):
-            column = rows.columns[column]
-        mask = rows[column].isin(ids)
-        rows[column].where(mask, inplace=True)
-        return rows[rows[column].notna()]
+    def __delayed_filter(rows: pd.DataFrame, ids: Set, columns: List) -> pd.DataFrame:
+        for i in range(len(columns)):
+            column: object = columns[i]
+            if isinstance(column, int):
+                columns[i] = rows.columns[columns]
+        mask = rows[columns].isin(ids)
+        for column in columns:
+            rows[column].where(mask[column], inplace=True)
+            rows = rows[rows[column].notna()]
+        return rows
 
     @dask.delayed
     def __filter_stops_by_bbox(self, stops: pd.DataFrame, bbox: Bbox) -> List:
@@ -45,7 +49,7 @@ class Extractor(GTFS):
         self,
         file_path: Path,
         ids: Set,
-        column: Union[str, int] = 0,
+        columns: List = None,
         usecols: List = None,
         dtype: Union[str, Dict] = "object",
         return_columns: List = None,
@@ -56,7 +60,7 @@ class Extractor(GTFS):
             raise GtfsFileNotFound(file_path=file_path.__str__())
         csv_chunks: ddf.DataFrame = ddf.read_csv(file_path, usecols=usecols, dtype=dtype, low_memory=False)
         results: Union[List, pd.DataFrame] = list(
-            dask.compute(*[self.__delayed_filter(d, ids, column) for d in csv_chunks.to_delayed()], scheduler=scheduler)
+            dask.compute(*[self.__delayed_filter(d, ids, columns) for d in csv_chunks.to_delayed()], scheduler=scheduler)
         )
         results = pd.concat(results, axis=0)
         if write_out:
@@ -86,7 +90,7 @@ class Extractor(GTFS):
             self._gtfs_files.stop_times,
             stops_to_keep,
             usecols=["stop_id", "trip_id"],
-            column="stop_id",
+            columns=["stop_id"],
             return_columns=["trip_id"],
             write_out=False,
         )[0]
@@ -95,7 +99,7 @@ class Extractor(GTFS):
         return self.__filter_using_custom_column(
             self._gtfs_files.trips,
             trips_to_keep,
-            column="trip_id",
+            columns=["trip_id"],
             dtype="object",
             return_columns=["route_id", "service_id"],
             write_out=True,
@@ -105,38 +109,56 @@ class Extractor(GTFS):
         return self.__filter_using_custom_column(
             self._gtfs_files.routes,
             routes_to_keep,
-            column="route_id",
+            columns=["route_id"],
             return_columns=["agency_id"],
             write_out=True,
         )[0]
 
     def _filter_stop_times_using_trips(self, trip_ids_to_keep: Set) -> Set:
+        logger.info("Filter stop_times.txt")
         return self.__filter_using_custom_column(
-            self._gtfs_files.stop_times, trip_ids_to_keep, column="trip_id", return_columns=["stop_id"], write_out=True
+            self._gtfs_files.stop_times,
+            trip_ids_to_keep,
+            columns=["trip_id"],
+            return_columns=["stop_id"],
+            write_out=True,
         )[0]
 
     def _filter_agencies(self, agency_ids_to_keep: Set) -> None:
         self.__filter_using_custom_column(
-            self._gtfs_files.agency, agency_ids_to_keep, column="agency_id", write_out=True
+            self._gtfs_files.agency, agency_ids_to_keep, columns=["agency_id"], write_out=True
         )
 
     def _filter_calendar_dates_using_services(self, service_ids_to_keep: Set) -> None:
+        logger.info("Filter calendar_dates.txt")
         self.__filter_using_custom_column(
-            self._gtfs_files.calendar_dates, service_ids_to_keep, column="service_id", write_out=True
+            self._gtfs_files.calendar_dates, service_ids_to_keep, columns=["service_id"], write_out=True
         )
 
     def _filter_calendar_using_services(self, service_ids_to_keep: Set) -> None:
+        logger.info("Filter calendar.txt")
         self.__filter_using_custom_column(
-            self._gtfs_files.calendar, service_ids_to_keep, column="service_id", write_out=True
+            self._gtfs_files.calendar, service_ids_to_keep, columns=["service_id"], write_out=True
         )
 
     def _filter_frequencies_using_trips(self, trip_ids_to_keep: Set) -> None:
-        self.__filter_using_custom_column(
-            self._gtfs_files.frequencies, trip_ids_to_keep, column="trip_id", write_out=True
-        )
+        if self._gtfs_files.frequencies:
+            logger.info("Filter frequencies.txt")
+            self.__filter_using_custom_column(
+                self._gtfs_files.frequencies, trip_ids_to_keep, columns=["trip_id"], write_out=True
+            )
 
     def _filter_stops(self, stop_ids_to_keep: Set) -> None:
-        self.__filter_using_custom_column(self._gtfs_files.stops, stop_ids_to_keep, column="stop_id", write_out=True)
+        logger.info("Filter stops.txt")
+        self.__filter_using_custom_column(self._gtfs_files.stops, stop_ids_to_keep, columns=["stop_id"], write_out=True)
+
+    def _filter_transfers_using_stops(self, stop_ids_to_keep: Set) -> None:
+        # TODO filter_using_custom_column with multiple criterias
+        if self._gtfs_files.transfers:
+            logger.info("Filter transfers.txt")
+            self.__filter_using_custom_column(
+                self._gtfs_files.transfers, stop_ids_to_keep, columns=["from_stop_id", "to_stop_id"], write_out=True
+            )
 
     def _process_common_files(self, service_ids_to_keep: Set, trip_ids_to_keep: Set) -> None:
         self._filter_calendar_dates_using_services(service_ids_to_keep)
@@ -146,17 +168,24 @@ class Extractor(GTFS):
         # Keep the stop_times used by the trips
         stop_ids_to_keep: Set = self._filter_stop_times_using_trips(trip_ids_to_keep)
         self._filter_stops(stop_ids_to_keep)
-        # self._filter_transfers_using_stops(stop_ids_to_keep)
-
-        logger.info(len(stop_ids_to_keep), " stops to keep")
+        self._filter_transfers_using_stops(stop_ids_to_keep)
+        logger.info(f" {len(stop_ids_to_keep)} stops to keep")
 
         # Copy the feed info
-        shutil.copyfile(self._gtfs_files.feed_info.name, self._output_folder.joinpath(self._gtfs_files.feed_info.name))
+        logger.info("Copy feed_info.txt to new location")
+        shutil.copyfile(self._gtfs_files.feed_info, self._output_folder.joinpath(self._gtfs_files.feed_info.name))
+
+    def _get_output_files(self) -> List:
+        files: List = []
+        for file in self._output_folder.glob("*.txt"):
+            self._gtfs_files.set_files(file)
+            files.append(file)
+        return files
 
     def extract_by_agency(self, agencies: List[str]) -> None:
         ...
 
-    def extract_by_bbox(self, bbox: Bbox) -> List[str]:
+    def extract_by_bbox(self, bbox: Bbox) -> List:
         logger.debug("Filter stops within bbox")
         stop_ids_in_bbox = self._get_stops_in_bbox(bbox)
         logger.info("Found {} stops in bbox".format(len(stop_ids_in_bbox)))
@@ -180,4 +209,4 @@ class Extractor(GTFS):
 
         self._process_common_files(service_ids_to_keep=service_ids_to_keep, trip_ids_to_keep=trip_ids)
 
-        return []
+        return self._get_output_files()

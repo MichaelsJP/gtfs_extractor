@@ -24,9 +24,9 @@ class GtfsFiles:
     trips: Path
 
     # Optional - not complete
-    frequencies: Path
-    shapes: Path
-    transfers: Path
+    frequencies: Path | None = None
+    shapes: Path | None = None
+    transfers: Path | None = None
 
     def set_files(self, file_path: Path) -> None:
         file_name: str = file_path.name

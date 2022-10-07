@@ -4,7 +4,7 @@ from pathlib import Path
 
 from typing import Optional, Union, List
 import typer
-from . import __app_name__, __version__
+from . import __app_name__, __version__, logger
 from .extractor.bbox import Bbox
 from .extractor.extractor import Extractor
 from .logging import initialize_logging
@@ -40,7 +40,12 @@ def extract_bbox(
     coordinates: List[float] = [float(x.strip()) for x in bbox.split(",")]
     keep_bbox: Bbox = Bbox(*coordinates)
     extractor: Extractor = Extractor(input_folder=Path(input_folder), output_folder=Path(output_folder))
-    extractor.extract_by_bbox(bbox=keep_bbox)
+    files: List = extractor.extract_by_bbox(bbox=keep_bbox)
+    extractor.close()
+    logger.info(f"Successfully processed {input_folder} to the following files:")
+    file: Path
+    for file in files:
+        logger.info(file.__str__())
 
 
 @app.callback()
