@@ -31,7 +31,7 @@ def _version_callback(value: bool) -> None:
 
 @app.command()
 def extract_bbox(
-    input_folder: str = typer.Option(..., help="Directory or zip File from which the GFTS files are read"),
+    input_object: str = typer.Option(..., help="Directory or zip File from which the GFTS files are read"),
     output_folder: str = typer.Option(..., help="Directory to which the GFTS files are written"),
     bbox: str = typer.Option(
         ..., help='The bbox for selecting the GTFS data to keep. Example: "8.573179,49.352003,8.79405,49.459693"'
@@ -39,10 +39,10 @@ def extract_bbox(
 ) -> None:
     coordinates: List[float] = [float(x.strip()) for x in bbox.split(",")]
     keep_bbox: Bbox = Bbox(*coordinates)
-    extractor: Extractor = Extractor(input_folder=Path(input_folder), output_folder=Path(output_folder))
+    extractor: Extractor = Extractor(input_folder=Path(input_object), output_folder=Path(output_folder))
     files: List = extractor.extract_by_bbox(bbox=keep_bbox)
     extractor.close()
-    logger.info(f"Successfully processed {input_folder} to the following files:")
+    logger.info(f"Successfully processed {input_object} to the following files:")
     file: Path
     for file in files:
         logger.info(file.__str__())
