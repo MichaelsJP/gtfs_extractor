@@ -15,21 +15,18 @@ from gtfs_extractor import logger
 from gtfs_extractor.exceptions.extractor_exceptions import GtfsFileNotFound
 from gtfs_extractor.extractor.bbox import Bbox
 from gtfs_extractor.extractor.gtfs import GTFS
-from dask.diagnostics import ProgressBar
-
-ProgressBar().register()
 
 
 class Extractor(GTFS):
-    def __init__(self, input_folder: Path, output_folder: Path) -> None:
-        super().__init__(input_folder)
+    def __init__(self, input_object: Path, output_folder: Path, scheduler: str = "multiprocessing") -> None:
+        super().__init__(input_object, scheduler=scheduler)
         if not output_folder.exists():
             raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), output_folder)
         self._output_folder: Path = output_folder
 
     @staticmethod
     @dask.delayed
-    def __delayed_filter(rows: pd.DataFrame, ids: Set, columns: List) -> pd.DataFrame:
+    def __delayed_row_filter(rows: pd.DataFrame, ids: Set, columns: List) -> pd.DataFrame:
         for i in range(len(columns)):
             column: object = columns[i]
             if isinstance(column, int):
@@ -56,7 +53,6 @@ class Extractor(GTFS):
         dtype: Union[str, Dict] = "object",
         return_columns: List = None,
         write_out: bool = False,
-        scheduler: str = "multiprocessing",
     ) -> Tuple:
         if not file_path or not file_path.exists():
             raise GtfsFileNotFound(file_path=file_path.__str__())
@@ -65,7 +61,9 @@ class Extractor(GTFS):
         if return_columns:
             return_columns = [column for column in return_columns if column in csv_chunks.columns]
         results: Union[List, pd.DataFrame] = list(
-            dask.compute(*[self.__delayed_filter(d, ids, columns) for d in csv_chunks.to_delayed()], scheduler=scheduler)
+            dask.compute(
+                *[self.__delayed_row_filter(d, ids, columns) for d in csv_chunks.to_delayed()], scheduler=self._scheduler
+            )
         )
         results = pd.concat(results, axis=0)
         if write_out:
@@ -89,7 +87,7 @@ class Extractor(GTFS):
         )
         lists_of_trips = list(
             dask.compute(
-                *[self.__filter_stops_by_bbox(d, bbox) for d in csv_chunks.to_delayed()], scheduler="multiprocessing"
+                *[self.__filter_stops_by_bbox(d, bbox) for d in csv_chunks.to_delayed()], scheduler=self._scheduler
             )
         )
         stops = set([item for sublist in lists_of_trips for item in sublist])
