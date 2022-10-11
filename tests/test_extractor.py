@@ -1,0 +1,103 @@
+import pathlib
+from typing import List
+
+from py._path.local import LocalPath
+from typer.testing import CliRunner
+
+from gtfs_extractor import cli, __app_name__, __version__
+
+runner = CliRunner()
+
+script_path = pathlib.Path(__file__).parent.resolve()
+
+
+def check_ic_ice_gtfs_germany_results(directory: LocalPath) -> None:
+    file: pathlib.PosixPath
+    output_files: List = [file for file in pathlib.Path(directory.__str__()).glob("*.txt")]
+    assert len(output_files) == 9
+
+    actual_files: List = [file.name for file in output_files]
+
+    expected_files: List = [
+        "stop_times.txt",
+        "stops.txt",
+        "trips.txt",
+        "calendar.txt",
+        "routes.txt",
+        "feed_info.txt",
+        "calendar_dates.txt",
+        "agency.txt",
+        "shapes.txt",
+    ]
+
+    assert len(actual_files) == len(expected_files)
+    assert all([file in expected_files for file in actual_files])
+
+    for file in output_files:
+        with open(file, "r") as fp:
+            x = len(fp.readlines())
+            if file.name == "stop_times.txt":
+                assert x == 2234
+            elif file.name == "stops.txt":
+                assert x == 372
+            elif file.name == "trips.txt":
+                assert x == 147
+            elif file.name == "calendar.txt":
+                assert x == 21
+            elif file.name == "routes.txt":
+                assert x == 19
+            elif file.name == "feed_info.txt":
+                assert x == 2
+            elif file.name == "calendar_dates.txt":
+                assert x == 7
+            elif file.name == "agency.txt":
+                assert x == 2
+            elif file.name == "shapes.txt":
+                assert x == 6
+
+
+def test_version() -> None:
+    result = runner.invoke(cli.app, ["--version"])
+    assert result.exit_code == 0
+    assert f"{__app_name__} v{__version__}\n" in result.stdout
+
+
+def test_extract_by_bbox_with_file(tmpdir: LocalPath) -> None:
+    test_gtfs_file: str = script_path.joinpath("files/ic_ice_gtfs_germany.zip").__str__()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--logging",
+            "INFO",
+            "extract-bbox",
+            "--input-object",
+            test_gtfs_file,
+            "--output-folder",
+            tmpdir.__str__(),
+            "--bbox",
+            "8.573179,49.352003,8.79405,49.459693",
+        ],
+    )
+    assert result.exit_code == 0
+    check_ic_ice_gtfs_germany_results(tmpdir)
+
+
+def test_extract_by_bbox_with_folder(gtfs_test_folder: pathlib.Path, tmpdir: LocalPath) -> None:
+    result = runner.invoke(
+        cli.app,
+        [
+            "--logging",
+            "INFO",
+            "extract-bbox",
+            "--input-object",
+            gtfs_test_folder.__str__(),
+            "--output-folder",
+            tmpdir.__str__(),
+            "--bbox",
+            "8.573179,49.352003,8.79405,49.459693",
+        ],
+    )
+    assert result.exit_code == 0
+
+    check_ic_ice_gtfs_germany_results(tmpdir)
