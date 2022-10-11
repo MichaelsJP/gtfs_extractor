@@ -111,4 +111,4 @@ def test_get_metadata(gtfs_test_folder: pathlib.Path) -> None:
         ["--logging", "INFO", "metadata", "--input-object", gtfs_test_folder.__str__()],
     )
     assert result.exit_code == 0
-    assert "Service date window from '2022-10-02 00:00:00' to '2022-10-09 00:00:00'" in result.stdout
+    assert "GTFS date window from '2022-10-02 00:00:00' to '2022-10-09 00:00:00'" in result.stdout
