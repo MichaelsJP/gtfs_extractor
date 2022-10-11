@@ -73,15 +73,15 @@ class GtfsFiles:
 
 
 class GTFS:
-    def __init__(self, input_folder: Path) -> None:
-        self._input_folder: Path = input_folder
+    def __init__(self, input_object: Path) -> None:
+        self._input_folder: Path = input_object
         self._temporary_folder_context: Any[tempfile.TemporaryDirectory, None] = None
         self._gtfs_files: GtfsFiles = GtfsFiles()
-        if input_folder.is_file():
-            input_folder = self._extract_gtfs_file(input_folder)
-        if not input_folder.exists():
-            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), input_folder)
-        for test in input_folder.glob("*.txt"):
+        if input_object.is_file():
+            input_object = self._extract_gtfs_file(input_object)
+        if not input_object.exists():
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), input_object)
+        for test in input_object.glob("*.txt"):
             self._gtfs_files.set_files(test)
         if not self._gtfs_files.required_is_complete():
             raise GtfsIncompleteException()

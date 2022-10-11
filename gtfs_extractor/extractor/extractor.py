@@ -21,8 +21,8 @@ ProgressBar().register()
 
 
 class Extractor(GTFS):
-    def __init__(self, input_folder: Path, output_folder: Path) -> None:
-        super().__init__(input_folder)
+    def __init__(self, input_object: Path, output_folder: Path) -> None:
+        super().__init__(input_object)
         if not output_folder.exists():
             raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), output_folder)
         self._output_folder: Path = output_folder
