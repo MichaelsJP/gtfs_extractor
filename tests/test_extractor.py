@@ -14,7 +14,7 @@ script_path = pathlib.Path(__file__).parent.resolve()
 def check_ic_ice_gtfs_germany_results(directory: LocalPath) -> None:
     file: pathlib.PosixPath
     output_files: List = [file for file in pathlib.Path(directory.__str__()).glob("*.txt")]
-    assert len(output_files) == 8
+    assert len(output_files) == 9
 
     actual_files: List = [file.name for file in output_files]
 
@@ -27,6 +27,7 @@ def check_ic_ice_gtfs_germany_results(directory: LocalPath) -> None:
         "feed_info.txt",
         "calendar_dates.txt",
         "agency.txt",
+        "shapes.txt",
     ]
 
     assert len(actual_files) == len(expected_files)
@@ -51,6 +52,8 @@ def check_ic_ice_gtfs_germany_results(directory: LocalPath) -> None:
                 assert x == 7
             elif file.name == "agency.txt":
                 assert x == 2
+            elif file.name == "shapes.txt":
+                assert x == 6
 
 
 def test_version() -> None:

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import csv
 import errno
 import os
@@ -47,7 +49,7 @@ class Extractor(GTFS):
 
     def __filter_using_custom_column(
         self,
-        file_path: Path,
+        file_path: Path | None,
         ids: Set,
         columns: List = None,
         usecols: List = None,
@@ -56,9 +58,12 @@ class Extractor(GTFS):
         write_out: bool = False,
         scheduler: str = "multiprocessing",
     ) -> Tuple:
-        if not file_path.exists():
+        if not file_path or not file_path.exists():
             raise GtfsFileNotFound(file_path=file_path.__str__())
         csv_chunks: ddf.DataFrame = ddf.read_csv(file_path, usecols=usecols, dtype=dtype, low_memory=False)
+        original_return_columns: List | None = return_columns
+        if return_columns:
+            return_columns = [column for column in return_columns if column in csv_chunks.columns]
         results: Union[List, pd.DataFrame] = list(
             dask.compute(*[self.__delayed_filter(d, ids, columns) for d in csv_chunks.to_delayed()], scheduler=scheduler)
         )
@@ -67,7 +72,12 @@ class Extractor(GTFS):
             output_path = self._output_folder.joinpath(file_path.name)
             results.to_csv(output_path, index=False, doublequote=True, quoting=csv.QUOTE_ALL)
         if isinstance(return_columns, List) and len(return_columns) > 0:
-            return tuple(set(results[return_column].tolist()) for return_column in return_columns)
+            final_results: Tuple = tuple(set(results[return_column].tolist()) for return_column in return_columns)
+            if isinstance(original_return_columns, List) and len(original_return_columns) > 0:
+                missing_results: int = len(original_return_columns) - len(final_results)
+                for _ in range(missing_results):
+                    final_results = final_results + (set(),)
+            return final_results
         return tuple()
 
     def _get_stops_in_bbox(self, bbox: Bbox) -> Set:
@@ -101,7 +111,7 @@ class Extractor(GTFS):
             trips_to_keep,
             columns=["trip_id"],
             dtype="object",
-            return_columns=["route_id", "service_id"],
+            return_columns=["route_id", "service_id", "shape_id"],
             write_out=True,
         )
 
@@ -124,7 +134,15 @@ class Extractor(GTFS):
             write_out=True,
         )[0]
 
+    def _filter_shapes(self, shape_ids_to_keep: Set) -> None:
+        if isinstance(shape_ids_to_keep, Set) and len(shape_ids_to_keep) > 0:
+            logger.info("Filter shapes.txt")
+            self.__filter_using_custom_column(
+                self._gtfs_files.shapes, shape_ids_to_keep, columns=["shape_id"], write_out=True
+            )
+
     def _filter_agencies(self, agency_ids_to_keep: Set) -> None:
+        logger.info("Filter agencies.txt")
         self.__filter_using_custom_column(
             self._gtfs_files.agency, agency_ids_to_keep, columns=["agency_id"], write_out=True
         )
@@ -191,13 +209,15 @@ class Extractor(GTFS):
         logger.info("Found {} stops in bbox".format(len(stop_ids_in_bbox)))
 
         logger.info("Filter trips from selected stops")
-        trip_ids: Set = self._get_trips_of_stops(stop_ids_in_bbox)
+        trip_ids: Set
+        trip_ids = self._get_trips_of_stops(stop_ids_in_bbox)
         logger.info("Found {} trips in bbox".format(len(trip_ids)))
 
         logger.info("Filter routes from selected trips")
         route_ids_to_keep: Set
         service_ids_to_keep: Set
-        route_ids_to_keep, service_ids_to_keep = self._filter_trips(trip_ids)
+        shape_ids_to_keep: Set
+        route_ids_to_keep, service_ids_to_keep, shape_ids_to_keep = self._filter_trips(trip_ids)
         logger.info("Found {} routes in bbox".format(len(route_ids_to_keep)))
 
         logger.info("Filter agencies")
@@ -205,6 +225,7 @@ class Extractor(GTFS):
         agency_ids_to_keep = self._filter_routes(route_ids_to_keep)
         logger.info("Keeping {} agencies in bbox".format(len(agency_ids_to_keep)))
 
+        self._filter_shapes(shape_ids_to_keep)
         self._filter_agencies(agency_ids_to_keep)
 
         self._process_common_files(service_ids_to_keep=service_ids_to_keep, trip_ids_to_keep=trip_ids)
