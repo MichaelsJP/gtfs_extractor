@@ -11,7 +11,7 @@ runner = CliRunner()
 script_path = pathlib.Path(__file__).parent.resolve()
 
 
-def check_ic_ice_gtfs_germany_results(directory: LocalPath) -> None:
+def check_ic_ice_gtfs_germany_extraction_results(directory: LocalPath) -> None:
     file: pathlib.PosixPath
     output_files: List = [file for file in pathlib.Path(directory.__str__()).glob("*.txt")]
     assert len(output_files) == 9
@@ -70,6 +70,7 @@ def test_extract_by_bbox_with_file(tmpdir: LocalPath) -> None:
         [
             "--logging",
             "INFO",
+            "--no-progress",
             "extract-bbox",
             "--input-object",
             test_gtfs_file,
@@ -80,7 +81,7 @@ def test_extract_by_bbox_with_file(tmpdir: LocalPath) -> None:
         ],
     )
     assert result.exit_code == 0
-    check_ic_ice_gtfs_germany_results(tmpdir)
+    check_ic_ice_gtfs_germany_extraction_results(tmpdir)
 
 
 def test_extract_by_bbox_with_folder(gtfs_test_folder: pathlib.Path, tmpdir: LocalPath) -> None:
@@ -89,6 +90,7 @@ def test_extract_by_bbox_with_folder(gtfs_test_folder: pathlib.Path, tmpdir: Loc
         [
             "--logging",
             "INFO",
+            "--no-progress",
             "extract-bbox",
             "--input-object",
             gtfs_test_folder.__str__(),
@@ -100,4 +102,13 @@ def test_extract_by_bbox_with_folder(gtfs_test_folder: pathlib.Path, tmpdir: Loc
     )
     assert result.exit_code == 0
 
-    check_ic_ice_gtfs_germany_results(tmpdir)
+    check_ic_ice_gtfs_germany_extraction_results(tmpdir)
+
+
+def test_get_metadata(gtfs_test_folder: pathlib.Path) -> None:
+    result = runner.invoke(
+        cli.app,
+        ["--logging", "INFO", "metadata", "--input-object", gtfs_test_folder.__str__()],
+    )
+    assert result.exit_code == 0
+    assert "Service date window from '2022-10-02 00:00:00' to '2022-10-09 00:00:00'" in result.stdout

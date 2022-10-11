@@ -4,9 +4,13 @@ import errno
 import os
 import tempfile
 import zipfile
+from datetime import datetime
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Tuple
+
+from dask import dataframe as ddf
+from pandas import Timestamp
 
 from gtfs_extractor import logger
 from gtfs_extractor.exceptions.extractor_exceptions import GtfsIncompleteException
@@ -73,10 +77,12 @@ class GtfsFiles:
 
 
 class GTFS:
-    def __init__(self, input_object: Path) -> None:
+    def __init__(self, input_object: Path, scheduler: str = "multiprocessing") -> None:
         self._input_folder: Path = input_object
         self._temporary_folder_context: Any[tempfile.TemporaryDirectory, None] = None
         self._gtfs_files: GtfsFiles = GtfsFiles()
+        self._scheduler = scheduler
+
         if input_object.is_file():
             input_object = self._extract_gtfs_file(input_object)
         if not input_object.exists():
@@ -107,3 +113,22 @@ class GTFS:
         with zipfile.ZipFile(input_file, "r") as zip_ref:
             zip_ref.extractall(extract_path)
         return extract_path
+
+    def service_date_range(self) -> Tuple:
+        """
+        Return the date range of the data set.
+        """
+
+        def parse_from_str(x: str) -> datetime:
+            return datetime.strptime(x, "%Y%m%d")
+
+        csv_chunks: ddf.DataFrame = ddf.read_csv(
+            self._gtfs_files.calendar,
+            usecols=["start_date", "end_date"],
+            parse_dates=["start_date", "end_date"],
+            date_parser=parse_from_str,
+            low_memory=False,
+        )
+        min_test: Timestamp = csv_chunks["start_date"].min().compute()
+        max_test: Timestamp = csv_chunks["end_date"].max().compute()
+        return min_test.strftime("%Y-%m-%d %H:%M:%S"), max_test.strftime("%Y-%m-%d %H:%M:%S")

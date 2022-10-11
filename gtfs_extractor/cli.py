@@ -7,7 +7,11 @@ import typer
 from . import __app_name__, __version__, logger
 from .extractor.bbox import Bbox
 from .extractor.extractor import Extractor
+from .extractor.gtfs import GTFS
 from .logging import initialize_logging
+from dask.diagnostics import ProgressBar
+
+dask_pbar = ProgressBar()
 
 app = typer.Typer()
 cpu_count: Union[None, int] = os.cpu_count()
@@ -39,7 +43,7 @@ def extract_bbox(
 ) -> None:
     coordinates: List[float] = [float(x.strip()) for x in bbox.split(",")]
     keep_bbox: Bbox = Bbox(*coordinates)
-    extractor: Extractor = Extractor(input_folder=Path(input_object), output_folder=Path(output_folder))
+    extractor: Extractor = Extractor(input_object=Path(input_object), output_folder=Path(output_folder))
     files: List = extractor.extract_by_bbox(bbox=keep_bbox)
     extractor.close()
     logger.info(f"Successfully processed {input_object} to the following files:")
@@ -48,10 +52,20 @@ def extract_bbox(
         logger.info(file.__str__())
 
 
+@app.command()
+def metadata(
+    input_object: str = typer.Option(..., help="Directory or zip File from which the GFTS files are read"),
+) -> None:
+    gtfs: GTFS = GTFS(input_object=Path(input_object))
+    dates = gtfs.service_date_range()
+    logger.info(f"Service date window from '{dates[0]}' to '{dates[1]}'")
+
+
 @app.callback()
 def main(
     logging: Optional[str] = "INFO",
     cores: Optional[int] = cpu_count,
+    progress: Optional[bool] = typer.Option(True, help="Deactivate the progress bars."),
     version: Optional[bool] = typer.Option(
         None,
         "--version",
@@ -64,4 +78,6 @@ def main(
     if logging is None:
         logging = "INFO"
     initialize_logging(logging)
+    if progress:
+        dask_pbar.register()
     return
