@@ -5,11 +5,12 @@ import errno
 import os
 import shutil
 from datetime import datetime
-import dask
 import dask.dataframe as ddf
 import pandas as pd
 from pathlib import Path
 from typing import List, Set, Union, Dict, Tuple
+
+from distributed import progress, LocalCluster, Client, Future
 
 from gtfs_extractor import logger
 from gtfs_extractor.exceptions.extractor_exceptions import GtfsFileNotFound
@@ -30,10 +31,11 @@ class Extractor(GTFS):
             logger.error(f"Check access rights. Couldn't find and create the output folder {output_folder}")
             raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), output_folder)
         self._output_folder: Path = output_folder
+        cluster = LocalCluster()
+        self.client = Client(cluster)
 
     @staticmethod
-    @dask.delayed
-    def __delayed_row_filter(rows: pd.DataFrame, ids: Set, columns: List) -> pd.DataFrame:
+    def __row_filter(rows: pd.DataFrame, ids: Set, columns: List) -> pd.DataFrame:
         for i in range(len(columns)):
             column: object = columns[i]
             if isinstance(column, int):
@@ -44,12 +46,12 @@ class Extractor(GTFS):
             rows = rows[rows[column].notna()]
         return rows
 
-    @dask.delayed
-    def __filter_stops_by_bbox(self, stops: pd.DataFrame, bbox: Bbox) -> List:
-        mask: pd.Series = stops.apply(lambda row: bbox.contains(row["stop_lat"], row["stop_lon"]), axis=1)
-        stops["stop_id"].where(mask, inplace=True)
-        stops.dropna(inplace=True)
-        return stops["stop_id"].tolist()
+    @staticmethod
+    def __filter_stops_by_bbox(rows: pd.DataFrame, bbox: Bbox) -> pd.DataFrame:
+        mask: pd.Series = rows.apply(lambda row: bbox.contains(row["stop_lat"], row["stop_lon"]), axis=1)
+        rows["stop_id"].where(mask, inplace=True)
+        rows.dropna(inplace=True)
+        return rows
 
     def __filter_rows_by_custom_column(
         self,
@@ -64,23 +66,26 @@ class Extractor(GTFS):
     ) -> Tuple:
         if not file_path or not file_path.exists():
             raise GtfsFileNotFound(file_path=file_path.__str__())
+        output_path = self._output_folder.joinpath(file_path.name)
         csv_chunks: ddf.DataFrame = ddf.read_csv(
-            file_path, usecols=usecols, dtype=dtype, low_memory=low_memory, blocksize=25e6
+            file_path, usecols=usecols, dtype=dtype, low_memory=low_memory, assume_missing=True
         )
         original_return_columns: List | None = return_columns
         if return_columns:
             return_columns = [column for column in return_columns if column in csv_chunks.columns]
-        results: Union[List, pd.DataFrame] = list(
-            dask.compute(
-                *[self.__delayed_row_filter(d, ids, columns) for d in csv_chunks.to_delayed()], scheduler=self._scheduler
-            )
-        )
-        results = pd.concat(results, axis=0)
+        ddf_out: ddf.DataFrame = csv_chunks.map_partitions(self.__row_filter, ids=ids, columns=columns)
         if write_out:
-            output_path = self._output_folder.joinpath(file_path.name)
-            results.to_csv(output_path, index=False, doublequote=True, quoting=csv.QUOTE_ALL)
+            future1: Future = self.client.compute(ddf_out)
+            progress(future1)
+            future1.result().to_csv(output_path, index=False, doublequote=True, quoting=csv.QUOTE_ALL)
         if isinstance(return_columns, List) and len(return_columns) > 0:
-            final_results: Tuple = tuple(set(results[return_column].tolist()) for return_column in return_columns)
+            if write_out:
+                ddf_out = ddf.read_csv(output_path, dtype=dtype, low_memory=low_memory, assume_missing=True)
+            future2: Future = self.client.compute(ddf_out[return_columns])
+            progress(future2)
+            results: pd.DataFrame = future2.result()
+            final_results: Tuple = tuple(set(results[column].tolist()) for column in results.keys())
+            del results
             if isinstance(original_return_columns, List) and len(original_return_columns) > 0:
                 missing_results: int = len(original_return_columns) - len(final_results)
                 for _ in range(missing_results):
@@ -95,13 +100,11 @@ class Extractor(GTFS):
             low_memory=False,
             dtype=GtfsDtypes.stops,
         )
-        lists_of_trips = list(
-            dask.compute(
-                *[self.__filter_stops_by_bbox(d, bbox) for d in csv_chunks.to_delayed()], scheduler=self._scheduler
-            )
-        )
-        stops = set([item for sublist in lists_of_trips for item in sublist])
-        return stops
+        ddf_out = csv_chunks.map_partitions(self.__filter_stops_by_bbox, bbox=bbox)
+        future: Future = self.client.compute(ddf_out["stop_id"])
+        progress(future)
+        results: Set = set(future.result().to_list())
+        return results
 
     def _get_trips_of_stop_times(self, stop_ids_to_keep: Set) -> Set:
         return self.__filter_rows_by_custom_column(
@@ -161,12 +164,12 @@ class Extractor(GTFS):
         if isinstance(shape_ids_to_keep, Set) and len(shape_ids_to_keep) > 0:
             logger.info("Filter shapes.txt")
             self.__filter_rows_by_custom_column(
-                self._gtfs_files.shapes,
-                shape_ids_to_keep,
+                file_path=self._gtfs_files.shapes,
+                ids=shape_ids_to_keep,
                 columns=["shape_id"],
                 write_out=True,
                 dtype=GtfsDtypes.shapes,
-                low_memory=True,
+                low_memory=False,
             )
 
     def _filter_agencies(self, agency_ids_to_keep: Set) -> None:
@@ -233,9 +236,11 @@ class Extractor(GTFS):
             low_memory=False,
         )
         # csv_chunks["start_date"] = ddf.to_datetime(csv_chunks["start_date"].dt.time.astype(str))
-        results: pd.DataFrame = csv_chunks.loc[
-            (csv_chunks.start_date >= start_date) & (csv_chunks.end_date <= end_date)
-        ].compute()
+        future: Future = self.client.compute(
+            csv_chunks.loc[(csv_chunks.start_date >= start_date) & (csv_chunks.end_date <= end_date)]
+        )
+        progress(future)
+        results: pd.DataFrame = future.result()
         output_path: Path = self._output_folder.joinpath(self._gtfs_files.calendar.name)
         results.to_csv(output_path, index=False, doublequote=True, quoting=csv.QUOTE_ALL)
         return set(results.service_id)
@@ -250,7 +255,11 @@ class Extractor(GTFS):
             date_parser=parse_date_from_str,
             low_memory=False,
         )
-        results: pd.DataFrame = csv_chunks.loc[(csv_chunks.date >= start_date) & (csv_chunks.date <= end_date)].compute()
+        future: Future = self.client.compute(
+            csv_chunks.loc[(csv_chunks.date >= start_date) & (csv_chunks.date <= end_date)]
+        )
+        progress(future)
+        results: pd.DataFrame = future.result()
         output_path: Path = self._output_folder.joinpath(self._gtfs_files.calendar.name)
         results.to_csv(output_path, index=False, doublequote=True, quoting=csv.QUOTE_ALL)
         return set(results.service_id)

@@ -8,7 +8,6 @@ import zipfile
 from pathlib import Path
 from typing import Any, Tuple, Dict
 
-import numpy
 from dask import dataframe as ddf
 import numpy as np
 

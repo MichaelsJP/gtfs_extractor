@@ -12,6 +12,7 @@ dask = { extras = ['distributed'], version = "^2022.9.2" }
 pandas = "^1.5.0"
 typer = "^0.6.1"
 rich = "^12.6.0"
+types-PyYAML = "^6.0.12"
 
 
 
@@ -60,4 +61,4 @@ exclude = '''
 
 [tool.pytest.ini_options]
 log_cli = true
-log_cli_level = 30 # Warnings
+log_cli_level = 20 # Warnings

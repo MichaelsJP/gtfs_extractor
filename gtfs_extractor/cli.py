@@ -7,6 +7,7 @@ from typing import Optional, Union, List
 import typer
 
 from . import __app_name__, __version__, logger
+from .dask_config import initialize_dask
 from .extractor.bbox import Bbox
 from .extractor.extractor import Extractor
 from .extractor.gtfs import GTFS
@@ -15,8 +16,6 @@ from dask.diagnostics import ProgressBar
 
 dask_pbar = ProgressBar()
 
-# cluster = LocalCluster(n_workers=3,threads_per_worker=5)
-# client = Client(cluster)
 
 app = typer.Typer()
 cpu_count: Union[None, int] = os.cpu_count()
@@ -106,6 +105,5 @@ def main(
     if logging is None:
         logging = "INFO"
     initialize_logging(logging)
-    if progress:
-        dask_pbar.register()
+    initialize_dask()
     return
