@@ -1,9 +1,11 @@
 """This module provides the RP To-Do CLI."""
 import os
+from datetime import datetime
 from pathlib import Path
 
 from typing import Optional, Union, List
 import typer
+
 from . import __app_name__, __version__, logger
 from .extractor.bbox import Bbox
 from .extractor.extractor import Extractor
@@ -12,6 +14,9 @@ from .logging import initialize_logging
 from dask.diagnostics import ProgressBar
 
 dask_pbar = ProgressBar()
+
+# cluster = LocalCluster(n_workers=3,threads_per_worker=5)
+# client = Client(cluster)
 
 app = typer.Typer()
 cpu_count: Union[None, int] = os.cpu_count()
@@ -46,7 +51,30 @@ def extract_bbox(
     extractor: Extractor = Extractor(input_object=Path(input_object), output_folder=Path(output_folder))
     files: List = extractor.extract_by_bbox(bbox=keep_bbox)
     extractor.close()
-    logger.info(f"Successfully processed {input_object} to the following files:")
+    logger.info(f"Successfully processed {input_object} to the following {len(files)} files:")
+    file: Path
+    for file in files:
+        logger.info(file.__str__())
+
+
+@app.command()
+def extract_date(
+    input_object: str = typer.Option(..., help="Directory or zip File from which the GFTS files are read"),
+    output_folder: str = typer.Option(..., help="Directory to which the GFTS files are written"),
+    start_date: str = typer.Option(
+        ..., help="Lower date boundary. Format: YYYYMMDD. e.g. 20221002 for 2nd October 2022"
+    ),
+    end_date: str = typer.Option(..., help="Lower date boundary. Format: YYYYMMDD. e.g. 20221002 for 2nd October 2022"),
+) -> None:
+    logger.info("<<<< Extract by date >>>>")
+    logger.info(f"<<<< Start date: {start_date}")
+    logger.info(f"<<<< End date: {end_date}")
+    extractor: Extractor = Extractor(input_object=Path(input_object), output_folder=Path(output_folder))
+    files: List = extractor.extract_by_date(
+        start_date=datetime.strptime(start_date, "%Y%m%d"), end_date=datetime.strptime(end_date, "%Y%m%d")
+    )
+    extractor.close()
+    logger.info(f"Successfully processed {input_object} to the following {len(files)} files:")
     file: Path
     for file in files:
         logger.info(file.__str__())

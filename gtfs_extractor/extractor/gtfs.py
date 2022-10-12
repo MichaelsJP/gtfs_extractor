@@ -4,16 +4,133 @@ import errno
 import os
 import tempfile
 import zipfile
-from datetime import datetime
 
 from pathlib import Path
-from typing import Any, Tuple
+from typing import Any, Tuple, Dict
 
+import numpy
 from dask import dataframe as ddf
-from pandas import Timestamp
+import numpy as np
 
 from gtfs_extractor import logger
 from gtfs_extractor.exceptions.extractor_exceptions import GtfsIncompleteException
+from gtfs_extractor.extractor.utils import parse_date_from_str
+
+
+class GtfsDtypes:
+    # Required
+    agency: Dict = {
+        "agency_id": np.str_,
+        "agency_name": np.str_,
+        "agency_url": np.str_,
+        "agency_timezone": np.str_,
+        "agency_lang": np.str_,
+        "agency_phone": np.str_,
+        "agency_fare_url": np.str_,
+        "agency_email": np.str_,
+    }
+    calendar_dates: Dict = {"service_id": np.str_, "date": np.str_, "exception_type": "Int64"}
+    calendar: Dict = {
+        "monday": "Int64",
+        "tuesday": "Int64",
+        "wednesday": "Int64",
+        "thursday": "Int64",
+        "friday": "Int64",
+        "saturday": "Int64",
+        "sunday": "Int64",
+        "start_date": np.str_,
+        "end_date": np.str_,
+        "service_id": np.str_,
+    }
+    feed_info: Dict = {
+        "feed_publisher_name": np.str_,
+        "feed_publisher_url": np.str_,
+        "feed_lang": np.str_,
+        "default_lang": np.str_,
+        "feed_start_date": np.str_,
+        "feed_end_date": np.str_,
+        "feed_version": np.str_,
+        "feed_contact_email": np.str_,
+        "feed_contact_url": np.str_,
+    }
+    routes: Dict = {
+        "route_id": np.str_,
+        "agency_id": np.str_,
+        "route_short_name": np.str_,
+        "route_long_name": np.str_,
+        "route_desc": np.str_,
+        "route_type": "Int64",
+        "route_url": np.str_,
+        "route_color": np.str_,
+        "route_text_color": np.str_,
+        "route_sort_order": "Int64",
+        "continuous_pickup": "Int64",
+        "continuous_drop_off": "Int64",
+    }
+    stops: Dict = {
+        "stop_id": np.str_,
+        "stop_code": np.str_,
+        "stop_name": np.str_,
+        "stop_desc": np.str_,
+        "stop_lat": np.float_,
+        "stop_lon": np.float_,
+        "zone_id": np.str_,
+        "stop_url": np.str_,
+        "location_type": "Int64",
+        "parent_station": np.str_,
+        "stop_timezone": np.str_,
+        "wheelchair_boarding": "Int64",
+        "level_id": np.str_,
+        "platform_code": np.str_,
+    }
+    trips: Dict = {
+        "route_id": np.str_,
+        "service_id": np.str_,
+        "trip_id": np.str_,
+        "trip_headsign": np.str_,
+        "trip_short_name": np.str_,
+        "direction_id": "Int64",
+        "block_id": np.str_,
+        "shape_id": np.str_,
+        "wheelchair_accessible": "Int64",
+        "bikes_allowed": "Int64",
+    }
+    stop_times: Dict = {
+        "trip_id": np.str_,
+        "arrival_time": np.str_,
+        "departure_time": np.str_,
+        "stop_id": np.str_,
+        "stop_sequence": "Int64",
+        "stop_headsign": np.str_,
+        "pickup_type": "Int64",
+        "drop_off_type": "Int64",
+        "continuous_pickup": "Int64",
+        "continuous_drop_off": "Int64",
+        "shape_dist_traveled": np.float_,
+        "timepoint": "Int64",
+    }
+
+    # Optional
+    shapes: Dict = {
+        "shape_id": np.str_,
+        "shape_pt_sequence": "Int64",
+        "shape_pt_lat": np.float_,
+        "shape_pt_lon": np.float_,
+        "shape_dist_traveled": np.float_,
+    }
+    frequencies: Dict = {
+        "trip_id": np.str_,
+        "start_time": np.str_,
+        "end_time": np.str_,
+        "headway_secs": "Int64",
+        "exact_times": "Int64",
+    }
+    transfers: Dict = {
+        "from_stop_id": np.str_,
+        "to_stop_id": np.str_,
+        "transfer_type": "Int64",
+        "min_transfer_time": "Int64",
+    }
 
 
 class GtfsFiles:
@@ -28,9 +145,27 @@ class GtfsFiles:
     trips: Path
 
     # Optional - not complete
-    frequencies: Path | None = None
-    shapes: Path | None = None
-    transfers: Path | None = None
+    _frequencies: Path | None = None
+    _shapes: Path | None = None
+    _transfers: Path | None = None
+
+    @property
+    def frequencies(self) -> Path:
+        if self._frequencies is None:
+            return Path("foo")
+        return self._frequencies
+
+    @property
+    def shapes(self) -> Path:
+        if self._shapes is None:
+            return Path("foo")
+        return self._shapes
+
+    @property
+    def transfers(self) -> Path:
+        if self._transfers is None:
+            return Path("foo")
+        return self._transfers
 
     def set_files(self, file_path: Path) -> None:
         file_name: str = file_path.name
@@ -51,11 +186,11 @@ class GtfsFiles:
         elif "trips" in file_name:
             self.trips = file_path
         elif "frequencies" in file_name:
-            self.frequencies = file_path
+            self._frequencies = file_path
         elif "shapes" in file_name:
-            self.shapes = file_path
+            self._shapes = file_path
         elif "transfers" in file_name:
-            self.transfers = file_path
+            self._transfers = file_path
         else:
             logger.warn(f"Unknown file found: {file_path}")
 
@@ -119,16 +254,12 @@ class GTFS:
         Return the date range of the data set.
         """
 
-        def parse_from_str(x: str) -> datetime:
-            return datetime.strptime(x, "%Y%m%d")
-
         csv_chunks: ddf.DataFrame = ddf.read_csv(
             self._gtfs_files.calendar,
             usecols=["start_date", "end_date"],
             parse_dates=["start_date", "end_date"],
-            date_parser=parse_from_str,
+            date_parser=parse_date_from_str,
             low_memory=False,
         )
-        min_test: Timestamp = csv_chunks["start_date"].min().compute()
-        max_test: Timestamp = csv_chunks["end_date"].max().compute()
-        return min_test.strftime("%Y-%m-%d %H:%M:%S"), max_test.strftime("%Y-%m-%d %H:%M:%S")
+        xmin, xmax = ddf.compute(csv_chunks["start_date"].min(), csv_chunks["end_date"].max())
+        return xmin.strftime("%Y-%m-%d %H:%M:%S"), xmax.strftime("%Y-%m-%d %H:%M:%S")

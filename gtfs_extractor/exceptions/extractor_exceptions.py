@@ -19,7 +19,7 @@ class GtfsIncompleteException(CustomException):
 
 class GtfsFileNotFound(CustomException):
     def __init__(self, file_path: str) -> None:
-        self.message = "Couldn't find the given file"
+        self.message = f"Couldn't find the given file: {file_path}"
         self.file_path = file_path
         logger.error(self.message)
         super().__init__(self.message)
