@@ -103,7 +103,7 @@ class Extractor(GTFS):
         ddf_out = csv_chunks.map_partitions(self.__filter_stops_by_bbox, bbox=bbox)
         future: Future = self.client.compute(ddf_out["stop_id"])
         progress(future)
-        results: Set = set(future.result().to_list())
+        results: Set = set(future.result().dropna().to_list())
         return results
 
     def _get_trips_of_stop_times(self, stop_ids_to_keep: Set) -> Set:
