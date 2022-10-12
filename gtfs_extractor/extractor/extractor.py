@@ -10,7 +10,7 @@ import pandas as pd
 from pathlib import Path
 from typing import List, Set, Union, Dict, Tuple
 
-from distributed import progress, LocalCluster, Client, Future
+from tqdm.dask import TqdmCallback
 
 from gtfs_extractor import logger
 from gtfs_extractor.exceptions.extractor_exceptions import GtfsFileNotFound
@@ -31,8 +31,6 @@ class Extractor(GTFS):
             logger.error(f"Check access rights. Couldn't find and create the output folder {output_folder}")
             raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), output_folder)
         self._output_folder: Path = output_folder
-        cluster = LocalCluster()
-        self.client = Client(cluster)
 
     @staticmethod
     def __row_filter(rows: pd.DataFrame, ids: Set, columns: List) -> pd.DataFrame:
@@ -75,15 +73,15 @@ class Extractor(GTFS):
             return_columns = [column for column in return_columns if column in csv_chunks.columns]
         ddf_out: ddf.DataFrame = csv_chunks.map_partitions(self.__row_filter, ids=ids, columns=columns)
         if write_out:
-            future1: Future = self.client.compute(ddf_out)
-            progress(future1)
-            future1.result().to_csv(output_path, index=False, doublequote=True, quoting=csv.QUOTE_ALL)
+            with TqdmCallback(desc=f"Filter {file_path.name}/Output to CSV"):
+                ddf_out.compute(scheduler=self._scheduler).to_csv(
+                    output_path, index=False, doublequote=True, quoting=csv.QUOTE_ALL
+                )
         if isinstance(return_columns, List) and len(return_columns) > 0:
             if write_out:
                 ddf_out = ddf.read_csv(output_path, dtype=dtype, low_memory=low_memory, assume_missing=True)
-            future2: Future = self.client.compute(ddf_out[return_columns])
-            progress(future2)
-            results: pd.DataFrame = future2.result()
+            with TqdmCallback(desc="Load results", unit=" chunks"):
+                results: pd.DataFrame = ddf_out[return_columns].compute(scheduler=self._scheduler)
             final_results: Tuple = tuple(set(results[column].dropna().tolist()) for column in results.keys())
             del results
             if isinstance(original_return_columns, List) and len(original_return_columns) > 0:
@@ -100,10 +98,9 @@ class Extractor(GTFS):
             low_memory=False,
             dtype=GtfsDtypes.stops,
         )
-        ddf_out = csv_chunks.map_partitions(self.__filter_stops_by_bbox, bbox=bbox)
-        future: Future = self.client.compute(ddf_out["stop_id"])
-        progress(future)
-        results: Set = set(future.result().dropna().to_list())
+        with TqdmCallback(desc="Filter stops by Bbox", unit=" chunks"):
+            ddf_out = csv_chunks.map_partitions(self.__filter_stops_by_bbox, bbox=bbox)
+            results: Set = set(ddf_out["stop_id"].compute(scheduler=self._scheduler).dropna().to_list())
         return results
 
     def _get_trips_of_stop_times(self, stop_ids_to_keep: Set) -> Set:
@@ -236,11 +233,10 @@ class Extractor(GTFS):
             low_memory=False,
         )
         # csv_chunks["start_date"] = ddf.to_datetime(csv_chunks["start_date"].dt.time.astype(str))
-        future: Future = self.client.compute(
-            csv_chunks.loc[(csv_chunks.start_date >= start_date) & (csv_chunks.end_date <= end_date)]
-        )
-        progress(future)
-        results: pd.DataFrame = future.result()
+        with TqdmCallback(desc="Filter calendar.txt", unit=" chunks"):
+            results: pd.DataFrame = csv_chunks.loc[
+                (csv_chunks.start_date >= start_date) & (csv_chunks.end_date <= end_date)
+            ].compute(scheduler=self._scheduler)
         output_path: Path = self._output_folder.joinpath(self._gtfs_files.calendar.name)
         results.to_csv(output_path, index=False, doublequote=True, quoting=csv.QUOTE_ALL)
         return set(results.service_id)
@@ -255,11 +251,10 @@ class Extractor(GTFS):
             date_parser=parse_date_from_str,
             low_memory=False,
         )
-        future: Future = self.client.compute(
-            csv_chunks.loc[(csv_chunks.date >= start_date) & (csv_chunks.date <= end_date)]
-        )
-        progress(future)
-        results: pd.DataFrame = future.result()
+        with TqdmCallback(desc="Filter calendar_dates.txt", unit=" chunks"):
+            results: pd.DataFrame = csv_chunks.loc[
+                (csv_chunks.date >= start_date) & (csv_chunks.date <= end_date)
+            ].compute(scheduler=self._scheduler)
         output_path: Path = self._output_folder.joinpath(self._gtfs_files.calendar.name)
         results.to_csv(output_path, index=False, doublequote=True, quoting=csv.QUOTE_ALL)
         return set(results.service_id)
