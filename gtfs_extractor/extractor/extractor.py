@@ -84,7 +84,7 @@ class Extractor(GTFS):
             future2: Future = self.client.compute(ddf_out[return_columns])
             progress(future2)
             results: pd.DataFrame = future2.result()
-            final_results: Tuple = tuple(set(results[column].tolist()) for column in results.keys())
+            final_results: Tuple = tuple(set(results[column].dropna().tolist()) for column in results.keys())
             del results
             if isinstance(original_return_columns, List) and len(original_return_columns) > 0:
                 missing_results: int = len(original_return_columns) - len(final_results)
